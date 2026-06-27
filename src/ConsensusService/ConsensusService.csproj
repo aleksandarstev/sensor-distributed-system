@@ -14,4 +14,10 @@
   <ItemGroup>
     <ProjectReference Include="..\Shared\Shared.csproj" />
   </ItemGroup>
+
+  <PropertyGroup>
+  <TargetFramework>net8.0</TargetFramework>
+  <UserSecretsId>consensus-service-secrets</UserSecretsId>
+</PropertyGroup>
+
 </Project>
