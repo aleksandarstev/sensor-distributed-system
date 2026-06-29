@@ -11,7 +11,7 @@ if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
 }
-
+// OVO JE NETAKNUT KOD ZNACI PLACEHOLDER KOD KOJI SE TREBA ZAMJENITI TJ KOD KOJI SE SAM GENERISE KAD SE NAPRAVI OVAJ FAJL
 app.UseHttpsRedirection();
 
 var summaries = new[]
