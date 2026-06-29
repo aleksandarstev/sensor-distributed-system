@@ -10,7 +10,6 @@ public static class BftConsensus
 
     public static ConsensusResult Calculate(List<SensorReadingEntity> readingsLastMinute)
     {
-        // Group readings by SensorId and select the latest reading for each sensor
         var latestPerSensor = readingsLastMinute
             .GroupBy(r => r.SensorId)
             .Select(g => g.OrderByDescending(r => r.ReceivedAt).First())
@@ -22,25 +21,34 @@ public static class BftConsensus
         var values = latestPerSensor.Select(r => r.Temperature).OrderBy(v => v).ToList();
         double median = GetMedian(values);
 
+        // Rangiraj senzore po odstupanju od medijane (najbliži prvi)
+        var rankedByDeviation = latestPerSensor
+            .Select(r => new { Reading = r, Deviation = Math.Abs(r.Temperature - median) })
+            .OrderBy(x => x.Deviation)
+            .ToList();
+
+        const int minimumTrustedSensors = 2; // nikad manje od ovoliko GOOD senzora
+
         var malicious = new List<string>();
         var trusted = new List<double>();
 
-        foreach (var reading in latestPerSensor)
+        for (int i = 0; i < rankedByDeviation.Count; i++)
         {
-            if (reading.Quality == "BAD")
-            {
-                malicious.Add(reading.SensorId);
-                continue;
-            }
+            var item = rankedByDeviation[i];
+            bool withinThreshold = item.Deviation <= DeviationThreshold;
+            bool mustKeepForMinimum = trusted.Count < minimumTrustedSensors;
 
-            double deviation = Math.Abs(reading.Temperature - median);
-            if (deviation > DeviationThreshold)
-                malicious.Add(reading.SensorId);
+            if (withinThreshold || mustKeepForMinimum)
+            {
+                trusted.Add(item.Reading.Temperature);
+            }
             else
-                trusted.Add(reading.Temperature);
+            {
+                malicious.Add(item.Reading.SensorId);
+            }
         }
 
-        double consensusValue = trusted.Count > 0 ? trusted.Average() : median;
+        double consensusValue = trusted.Average();
 
         return new ConsensusResult(consensusValue, malicious, latestPerSensor.Count);
     }
