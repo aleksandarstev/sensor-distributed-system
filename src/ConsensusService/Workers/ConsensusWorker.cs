@@ -7,8 +7,9 @@ namespace ConsensusService.Workers;
 public class ConsensusWorker : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;    // create a scope for each execution cycle to get a new DbContext instance
-    private readonly ILogger<ConsensusWorker> _logger;      
-    private static readonly TimeSpan Interval = TimeSpan.FromMinutes(1);    // run the consensus calculation every minute
+    private readonly ILogger<ConsensusWorker> _logger;
+    private readonly Dictionary<string, int> _maliciousStreak = new();  // track how many consecutive cycles a sensor has been flagged as malicious
+    private static readonly TimeSpan Interval = TimeSpan.FromMinutes(1);
 
     public ConsensusWorker(IServiceScopeFactory scopeFactory, ILogger<ConsensusWorker> logger)
     {
@@ -33,15 +34,14 @@ public class ConsensusWorker : BackgroundService
         }
     }
 
-    // runs a single consensus calculation cycle,
-    // fetching readings from the last minute
-    // and updating the database with the consensus result and any malicious sensors
+    // runs a single consensus calculation cycle, fetching the last minute of sensor readings,
+    // calculating the consensus value, and updating the database accordingly
     private async Task RunConsensusCycleAsync(CancellationToken ct)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-        var windowStart = DateTime.UtcNow - Interval;
+        var windowStart = DateTime.UtcNow - Interval;   
 
         var readings = await db.SensorReadings
             .Where(r => r.ReceivedAt >= windowStart && !r.IsConsensus)
@@ -49,7 +49,7 @@ public class ConsensusWorker : BackgroundService
 
         if (readings.Count == 0)
         {
-            _logger.LogInformation("No data to calculate consensus for the last minute.");  
+            _logger.LogInformation("No data to calculate consensus for the last minute.");
             return;
         }
 
@@ -65,19 +65,38 @@ public class ConsensusWorker : BackgroundService
             IsConsensus = true
         });
 
+        // Update the malicious streak counts and mark sensors as BAD if they have been malicious for 2 consecutive cycles
         foreach (var sensorId in result.MaliciousSensorIds)
         {
-            var registryEntry = await db.SensorRegistry
-                .FirstOrDefaultAsync(s => s.SensorId == sensorId, ct);
+            _maliciousStreak[sensorId] = _maliciousStreak.GetValueOrDefault(sensorId, 0) + 1;
 
-            if (registryEntry is not null && registryEntry.Quality != "BAD")
+            if (_maliciousStreak[sensorId] >= 2)    // sensor is considered malicious if it has been flagged for 2 consecutive cycles
             {
-                registryEntry.Quality = "BAD";
-                _logger.LogWarning("Sensor {SensorId} marked as malicious.", sensorId);
+                var registryEntry = await db.SensorRegistry
+                    .FirstOrDefaultAsync(s => s.SensorId == sensorId, ct);
+
+                if (registryEntry is not null && registryEntry.Quality != "BAD")
+                {
+                    registryEntry.Quality = "BAD";
+                    _logger.LogWarning(
+                        "Sensor {SensorId} marked as BAD after {MaliciousCount} consecutive malicious cycles.",
+                        sensorId, _maliciousStreak[sensorId]);
+                }
+            }
+            else
+            {
+                _logger.LogInformation(
+                    "Sensor {SensorId} flagged as malicious for {MaliciousCount} consecutive cycles.",
+                    sensorId, _maliciousStreak[sensorId]);
             }
         }
 
-        await db.SaveChangesAsync(ct);
+        foreach (var sensorId in result.TrustedSensorIds)
+        {
+            _maliciousStreak[sensorId] = 0;
+        }
+
+        await db.SaveChangesAsync(CancellationToken.None);
 
         _logger.LogInformation(
             "Consensus calculated: Value={ConsensusValue}, SampleCount={SampleCount}, MaliciousSensors={MaliciousCount}",

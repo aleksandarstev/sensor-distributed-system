@@ -4,34 +4,40 @@ namespace ConsensusService.Workers;
 
 public static class BftConsensus
 {
-    private const double DeviationThreshold = 50.0; // treshold for considering a reading as malicious
+    private const double DeviationThreshold = 80.0; // maximum allowed deviation from the median to consider a reading as trusted
 
-    public record ConsensusResult(double ConsensusValue, List<string> MaliciousSensorIds, int SampleCount);
+    public record ConsensusResult(
+        double ConsensusValue,
+        List<string> MaliciousSensorIds,    // sensors whose readings were considered outliers
+        List<string> TrustedSensorIds,  // sensors whose readings were used to calculate the consensus value
+        int SampleCount);
 
     public static ConsensusResult Calculate(List<SensorReadingEntity> readingsLastMinute)
     {
+        // take the latest reading for each sensor
         var latestPerSensor = readingsLastMinute
             .GroupBy(r => r.SensorId)
             .Select(g => g.OrderByDescending(r => r.ReceivedAt).First())
             .ToList();
 
         if (latestPerSensor.Count == 0)
-            return new ConsensusResult(0, new List<string>(), 0);
+            return new ConsensusResult(0, new List<string>(), new List<string>(), 0);
 
         var values = latestPerSensor.Select(r => r.Temperature).OrderBy(v => v).ToList();
-        double median = GetMedian(values);
+        double median = GetMedian(values);  // calculate the median of the latest readings
 
-        // Rangiraj senzore po odstupanju od medijane (najbliži prvi)
         var rankedByDeviation = latestPerSensor
             .Select(r => new { Reading = r, Deviation = Math.Abs(r.Temperature - median) })
             .OrderBy(x => x.Deviation)
             .ToList();
 
-        const int minimumTrustedSensors = 2; // nikad manje od ovoliko GOOD senzora
+        const int minimumTrustedSensors = 2;    // ensure at least 2 sensors are trusted even if they exceed the deviation threshold
 
         var malicious = new List<string>();
         var trusted = new List<double>();
+        var trustedIds = new List<string>();
 
+        // Rank the readings by their deviation from the median and classify them as trusted or malicious
         for (int i = 0; i < rankedByDeviation.Count; i++)
         {
             var item = rankedByDeviation[i];
@@ -41,6 +47,7 @@ public static class BftConsensus
             if (withinThreshold || mustKeepForMinimum)
             {
                 trusted.Add(item.Reading.Temperature);
+                trustedIds.Add(item.Reading.SensorId);
             }
             else
             {
@@ -50,10 +57,9 @@ public static class BftConsensus
 
         double consensusValue = trusted.Average();
 
-        return new ConsensusResult(consensusValue, malicious, latestPerSensor.Count);
+        return new ConsensusResult(consensusValue, malicious, trustedIds, latestPerSensor.Count);
     }
 
-    // Helper method to calculate the median of a sorted list - middle value 
     private static double GetMedian(List<double> sortedValues)
     {
         int n = sortedValues.Count;

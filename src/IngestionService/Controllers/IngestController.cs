@@ -54,8 +54,10 @@ public class IngestController : ControllerBase
             else
             {
                 registry.LastSeenAt = DateTime.UtcNow;
-                registry.IsActive = true;
                 registry.LastMessageSequence = message.MessageSequence;
+
+                if (!registry.IsBlocked)    // only activate the sensor if it is not blocked
+                    registry.IsActive = true;
             }
 
             await _db.SaveChangesAsync();
