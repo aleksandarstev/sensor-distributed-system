@@ -35,7 +35,6 @@
 
   <ItemGroup>
     <Folder Include="Security\" />
-    <Folder Include="Services\" />
   </ItemGroup>
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
