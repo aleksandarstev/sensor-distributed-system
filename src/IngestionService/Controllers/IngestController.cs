@@ -2,6 +2,7 @@
 using IngestionService.Data.Entities;
 using Microsoft.AspNetCore.Mvc;
 using Shared.Contracts;
+using System.Net.Http.Json;
 
 namespace IngestionService.Controllers;
 
@@ -13,11 +14,13 @@ public class IngestController : ControllerBase
 
     private readonly AppDbContext _db;
     private readonly ILogger<IngestController> _logger;
+    private readonly IHttpClientFactory _httpClientFactory;
 
-    public IngestController(AppDbContext db, ILogger<IngestController> logger)
+    public IngestController(AppDbContext db, ILogger<IngestController> logger, IHttpClientFactory httpClientFactory)
     {
         _db = db;
         _logger = logger;
+        _httpClientFactory = httpClientFactory;
     }
 
     [HttpPost]
@@ -82,6 +85,8 @@ public class IngestController : ControllerBase
                 Console.ResetColor();
             }
 
+            await NotifyAlarmAsync(message);
+
             return Ok();
         }
         catch (Exception ex)
@@ -104,5 +109,28 @@ public class IngestController : ControllerBase
 
         _logger.LogWarning("Senzor {SensorId} je blokiran na 30 sekundi.", sensorId);
         return Ok();
+    }
+
+    private async Task NotifyAlarmAsync(SensorMessage message)
+    {
+        try
+        {
+            var client = _httpClientFactory.CreateClient("NotificationService");
+            var alarm = new AlarmNotification
+            {
+                SensorId = message.SensorId,
+                Temperature = message.Temperature,
+                AlarmPriority = message.AlarmPriority,
+                Timestamp = message.SentAt
+            };
+
+            var response = await client.PostAsJsonAsync("api/notify", alarm);
+            if (!response.IsSuccessStatusCode)
+                _logger.LogWarning("NotificationService je odgovorio sa {StatusCode} za senzor {SensorId}", response.StatusCode, message.SensorId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("Slanje alarma ka NotificationService-u nije uspelo za senzor {SensorId}: {Error}", message.SensorId, ex.Message);
+        }
     }
 }
