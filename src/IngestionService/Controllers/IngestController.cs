@@ -9,6 +9,8 @@ namespace IngestionService.Controllers;
 [Route("api/ingest")]
 public class IngestController : ControllerBase
 {
+    private static readonly object ConsoleLock = new();
+
     private readonly AppDbContext _db;
     private readonly ILogger<IngestController> _logger;
 
@@ -26,11 +28,14 @@ public class IngestController : ControllerBase
 
         try
         {
+            var registry = await _db.SensorRegistry.FindAsync(message.SensorId);
+            var currentQuality = registry?.Quality ?? "GOOD";
+
             var reading = new SensorReadingEntity
             {
                 SensorId = message.SensorId,
                 Temperature = message.Temperature,
-                Quality = "GOOD",
+                Quality = currentQuality,
                 AlarmPriority = message.AlarmPriority,
                 ReceivedAt = DateTime.UtcNow,
                 IsConsensus = false
@@ -38,7 +43,6 @@ public class IngestController : ControllerBase
 
             _db.SensorReadings.Add(reading);
 
-            var registry = await _db.SensorRegistry.FindAsync(message.SensorId);
             if (registry is null)
             {
                 _db.SensorRegistry.Add(new SensorRegistryEntity
@@ -62,6 +66,22 @@ public class IngestController : ControllerBase
 
             await _db.SaveChangesAsync();
             _logger.LogInformation("Primljena poruka od senzora {SensorId}", message.SensorId);
+
+            if (message.AlarmPriority == 0) return Ok();
+
+            lock (ConsoleLock)
+            {
+                Console.ForegroundColor = message.AlarmPriority switch
+                {
+                    1 => ConsoleColor.Yellow,
+                    2 => ConsoleColor.DarkYellow,
+                    3 => ConsoleColor.Red,
+                    _ => ConsoleColor.White
+                };
+                Console.WriteLine($"[{message.SensorId}] {message.Temperature:F2}°C @ {message.SentAt:HH:mm:ss} | Alarm: {message.AlarmPriority}");
+                Console.ResetColor();
+            }
+
             return Ok();
         }
         catch (Exception ex)

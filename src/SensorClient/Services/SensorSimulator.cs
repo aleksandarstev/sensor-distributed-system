@@ -8,6 +8,8 @@ namespace SensorClient.Services;
 
 public class SensorSimulator
 {
+    private static readonly object ConsoleLock = new();
+
     private readonly SensorConfig _config;
     private readonly HttpClient _httpClient;
     private readonly Random _rng = new();
@@ -36,8 +38,29 @@ public class SensorSimulator
         }
     }
 
-    private double GenerateTemperature() =>
-        _config.TempMin + _rng.NextDouble() * (_config.TempMax - _config.TempMin);
+    private double GenerateTemperature()
+    {
+        var baseValue = _config.TempMin + _rng.NextDouble() * (_config.TempMax - _config.TempMin);
+
+        switch (_config.InitialQuality)
+        {
+            case DataQuality.BAD:
+                if (_rng.NextDouble() < 0.65)
+                {
+                    var range = _config.TempMax - _config.TempMin;
+                    var garbageOffset = range * (0.5 + _rng.NextDouble());
+                    return _rng.NextDouble() < 0.5 ? baseValue + garbageOffset : baseValue - garbageOffset;
+                }
+                return baseValue;
+
+            case DataQuality.UNCERTAIN:
+                var noise = (_config.TempMax - _config.TempMin) * 0.15 * (_rng.NextDouble() * 2 - 1);
+                return baseValue + noise;
+
+            default:
+                return baseValue;
+        }
+    }
 
     private int EvaluateAlarm(double temp)
     {
@@ -49,15 +72,18 @@ public class SensorSimulator
 
     private void PrintToConsole(double temp, int priority)
     {
-        Console.ForegroundColor = priority switch
+        lock (ConsoleLock)
         {
-            1 => ConsoleColor.Yellow,
-            2 => ConsoleColor.DarkYellow,
-            3 => ConsoleColor.Red,
-            _ => ConsoleColor.White
-        };
-        Console.WriteLine($"[{_config.SensorId}] {temp:F2}°C @ {DateTime.UtcNow:HH:mm:ss} | Alarm: {priority}");
-        Console.ResetColor();
+            Console.ForegroundColor = priority switch
+            {
+                1 => ConsoleColor.Yellow,
+                2 => ConsoleColor.DarkYellow,
+                3 => ConsoleColor.Red,
+                _ => ConsoleColor.White
+            };
+            Console.WriteLine($"[{_config.SensorId}] {temp:F2}°C @ {DateTime.UtcNow:HH:mm:ss} | Alarm: {priority}");
+            Console.ResetColor();
+        }
     }
 
     private async Task SendToServerAsync(double temperature, int alarmPriority, CancellationToken ct)
