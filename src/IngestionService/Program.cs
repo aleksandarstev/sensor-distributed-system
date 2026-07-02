@@ -10,6 +10,9 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 
 builder.Services.AddHostedService<FaultToleranceMonitor>();
 
+builder.Services.AddHttpClient("NotificationService", client =>
+    client.BaseAddress = new Uri(builder.Configuration["NotificationService:BaseUrl"]!));
+
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
